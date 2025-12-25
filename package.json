@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "commonjs",
   "description": "Micro AWS Website CDN with CDK",
+  "private": true,
   "bin": {
     "aws-website-cdn-cdk": "bin/aws-website-cdn-cdk.js"
   },
