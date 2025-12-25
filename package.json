@@ -1,20 +1,22 @@
 {
   "name": "aws-website-cdn-cdk",
   "version": "0.1.0",
+  "type": "commonjs",
+  "description": "Micro AWS Website CDN with CDK",
   "bin": {
     "aws-website-cdn-cdk": "bin/aws-website-cdn-cdk.js"
   },
   "scripts": {
-    "build": "echo \"The build step is not required when using JavaScript!\" && exit 0",
     "cdk": "cdk",
-    "test": "jest"
+    "diff": "cdk diff",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy",
+    "destroy": "cdk destroy"
   },
   "devDependencies": {
-    "aws-cdk": "2.1100.1",
-    "jest": "^29.7.0"
+    "aws-cdk": "2.1100.1"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.232.1",
-    "constructs": "^10.0.0"
+    "aws-cdk-lib": "2.233.0"
   }
 }

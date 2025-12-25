@@ -1,9 +1,10 @@
 #!/home/linuxbrew/.linuxbrew/opt/node/bin/node
 
-const cdk = require('aws-cdk-lib/core');
-const { AwsWebsiteCdnCdkStack } = require('../lib/aws-website-cdn-cdk-stack');
+const cdk = require('aws-cdk-lib');
+const { AwsWebsiteCdnCdkStack } = require('../lib/aws-website-cdn-cdk-stack.mjs');
 
 const app = new cdk.App();
+
 new AwsWebsiteCdnCdkStack(app, 'AwsWebsiteCdnCdkStack', {
   /* If you don't specify 'env', this stack will be environment-agnostic.
    * Account/Region-dependent features and context lookups will not work,
