@@ -12,12 +12,19 @@
     "diff": "cdk diff",
     "synth": "cdk synth",
     "deploy": "cdk deploy",
-    "destroy": "cdk destroy"
+    "destroy": "cdk destroy",
+    "lint": "prettier --check .",
+    "lint:fix": "prettier --write .",
+    "prettier": "prettier --write ."
   },
   "devDependencies": {
-    "aws-cdk": "2.1100.1"
+    "aws-cdk": "2.1100.1",
+    "esbuild": "^0.27.2",
+    "prettier": "^3.7.4"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.233.0"
+    "@aws-sdk/client-s3": "^3.958.0",
+    "aws-cdk-lib": "2.233.0",
+    "mime": "^4.1.0"
   }
 }
