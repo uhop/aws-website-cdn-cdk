@@ -42,7 +42,6 @@ const getData = async (name) => {
 
 const respond = (data, meta, contentType, headers = {}, vary = 'Accept-Encoding') => {
   const headersFromMeta = {};
-  if (meta.ContentType) headersFromMeta['Content-Type'] = meta.ContentType;
   if (meta.ContentEncoding) headersFromMeta['Content-Encoding'] = meta.ContentEncoding;
   if (meta.ContentLanguage) headersFromMeta['Content-Language'] = meta.ContentLanguage;
   if (meta.ETag) headersFromMeta['ETag'] = meta.ETag;
@@ -75,7 +74,7 @@ const getObject = async (name, headers, meta) => {
   if (IMAGES[contentType] === 1 && WEBP.isSupported.test(normalizedHeaders['accept'])) {
     try {
       const data = await getData(name + WEBP.suffix);
-      return respond(data, meta, 'image/webp', 'Accept');
+      return respond(data, meta, 'image/webp', {}, 'Accept');
     } catch (error) {
       if (error instanceof s3.S3ServiceException) {
         if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey') {
