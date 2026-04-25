@@ -10,22 +10,38 @@ const CACHE_PERIOD = process.env.CACHE_PERIOD || String(60 * 60 * 24 * 3); // 3d
 
 const FOLDER_SUFFIX = '/index.html';
 const WEBP = {isSupported: /\bimage\/webp\b/i, suffix: '.webp'};
-const ZSTD = {isSupported: /\bzstd\b/i, suffix: '.zst'};
-const BR = {isSupported: /\bbr\b/i, suffix: '.br'};
-const GZIP = {isSupported: /\bgzip\b/i, suffix: '.gz'};
 
-const IMAGES = {
-  'image/jpeg': 1,
-  'image/png': 1,
-};
+// Order is the tie-breaker when two variants share the same byte count.
+const TEXT_CODECS = [
+  {accept: /\bbr\b/i, suffix: '.br', encoding: 'br'},
+  {accept: /\bzstd\b/i, suffix: '.zst', encoding: 'zstd'},
+  {accept: /\bgzip\b/i, suffix: '.gz', encoding: 'gzip'},
+];
 
-const TEXTS = {
-  'text/plain': 1,
-  'text/html': 1,
-  'text/css': 1,
-  'application/javascript': 1,
-  'application/json': 1,
-  'application/xml': 1,
+// Per content-type dispatch. 'image' → best-match against a WebP variant if the
+// client supports image/webp. 'compressible' → best-match-by-size across .br/.zst/.gz
+// siblings plus identity. Anything not in this map serves the original byte-for-byte.
+const DISPATCH = {
+  'image/jpeg': 'image',
+  'image/png': 'image',
+  'text/plain': 'compressible',
+  'text/html': 'compressible',
+  'text/css': 'compressible',
+  'text/xml': 'compressible',
+  'text/markdown': 'compressible',
+  'text/csv': 'compressible',
+  'application/javascript': 'compressible',
+  'application/json': 'compressible',
+  'application/xml': 'compressible',
+  'application/wasm': 'compressible',
+  'application/manifest+json': 'compressible',
+  'application/ld+json': 'compressible',
+  'application/atom+xml': 'compressible',
+  'application/rss+xml': 'compressible',
+  'image/svg+xml': 'compressible',
+  'image/bmp': 'compressible',
+  'font/ttf': 'compressible',
+  'font/otf': 'compressible',
 };
 
 const s3Client = new s3.S3Client();
@@ -38,6 +54,26 @@ const getData = async (name) => {
     }),
   );
   return response.Body.transformToByteArray();
+};
+
+const headVariant = async (name) => {
+  try {
+    return await s3Client.send(
+      new s3.HeadObjectCommand({
+        Bucket: BUCKET,
+        Key: name,
+      }),
+    );
+  } catch (error) {
+    if (error instanceof s3.S3ServiceException) {
+      if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey' && error.name !== 'NotFound') {
+        console.error('Error checking variant (s3):', name, error);
+      }
+    } else {
+      console.error('Error checking variant (other):', name, error);
+    }
+    return null;
+  }
 };
 
 const respond = (data, meta, contentType, headers = {}, vary = 'Accept-Encoding') => {
@@ -68,67 +104,34 @@ const getObject = async (name, headers, meta) => {
     normalizedHeaders[key.toLowerCase()] = value;
   }
 
-  const acceptEncoding = normalizedHeaders['accept-encoding'];
+  const acceptEncoding = normalizedHeaders['accept-encoding'] || '';
   const contentType = meta.ContentType || mime.getType(name);
+  const kind = DISPATCH[contentType];
 
-  if (IMAGES[contentType] === 1 && WEBP.isSupported.test(normalizedHeaders['accept'])) {
-    try {
+  if (kind === 'image' && WEBP.isSupported.test(normalizedHeaders['accept'])) {
+    const webpMeta = await headVariant(name + WEBP.suffix);
+    if (webpMeta) {
       const data = await getData(name + WEBP.suffix);
       return respond(data, meta, 'image/webp', {}, 'Accept');
-    } catch (error) {
-      if (error instanceof s3.S3ServiceException) {
-        if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey') {
-          console.error('Error checking webp object (s3):', name, error);
-        }
-      } else {
-        console.error('Error checking webp object (other):', name, error);
-      }
-      // skip
     }
-  } else if (TEXTS[contentType] && !meta.ContentEncoding) {
-    if (BR.isSupported.test(acceptEncoding)) {
-      try {
-        const data = await getData(name + BR.suffix);
-        return respond(data, meta, contentType, {'Content-Encoding': 'br'});
-      } catch (error) {
-        if (error instanceof s3.S3ServiceException) {
-          if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey') {
-            console.error('Error checking webp object (s3):', name, error);
-          }
-        } else {
-          console.error('Error checking webp object (other):', name, error);
-        }
-        // skip
-      }
-    }
-    if (ZSTD.isSupported.test(acceptEncoding)) {
-      try {
-        const data = await getData(name + ZSTD.suffix);
-        return respond(data, meta, contentType, {'Content-Encoding': 'zstd'});
-      } catch (error) {
-        if (error instanceof s3.S3ServiceException) {
-          if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey') {
-            console.error('Error checking webp object (s3):', name, error);
-          }
-        } else {
-          console.error('Error checking webp object (other):', name, error);
-        }
-        // skip
-      }
-    }
-    if (GZIP.isSupported.test(acceptEncoding)) {
-      try {
-        const data = await getData(name + GZIP.suffix);
-        return respond(data, meta, contentType, {'Content-Encoding': 'gzip'});
-      } catch (error) {
-        if (error instanceof s3.S3ServiceException) {
-          if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey') {
-            console.error('Error checking webp object (s3):', name, error);
-          }
-        } else {
-          console.error('Error checking webp object (other):', name, error);
-        }
-        // skip
+  } else if (kind === 'compressible' && !meta.ContentEncoding) {
+    const accepted = TEXT_CODECS.filter((c) => c.accept.test(acceptEncoding));
+    if (accepted.length > 0) {
+      const probes = await Promise.all(
+        accepted.map(async (c) => {
+          const variantMeta = await headVariant(name + c.suffix);
+          return variantMeta ? {...c, size: variantMeta.ContentLength} : null;
+        }),
+      );
+      const choices = probes.filter(Boolean);
+      // Identity is always a valid candidate; its size is already known from the original HEAD.
+      choices.push({encoding: null, suffix: '', size: meta.ContentLength});
+      // Stable sort: when sizes tie, TEXT_CODECS order wins, identity loses (pushed last).
+      choices.sort((a, b) => a.size - b.size);
+      const winner = choices[0];
+      if (winner.encoding) {
+        const data = await getData(name + winner.suffix);
+        return respond(data, meta, contentType, {'Content-Encoding': winner.encoding});
       }
     }
   }
