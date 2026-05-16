@@ -7,16 +7,31 @@ import * as s3 from '@aws-sdk/client-s3';
 const BUCKET = process.env.BUCKET;
 const PREFIX = process.env.PREFIX || '/';
 const CACHE_PERIOD = process.env.CACHE_PERIOD || String(60 * 60 * 24 * 3); // 3d
+const EXPECTED_SECRET = process.env.EXPECTED_SECRET;
 
 const FOLDER_SUFFIX = '/index.html';
 const WEBP = {isSupported: /\bimage\/webp\b/i, suffix: '.webp'};
 
-// Django-era feed URLs that still get ~1500 polls/month from old RSS readers.
-// All redirect to the current Hugo global feed; per-tag mapping isn't faithful
-// since the legacy numeric category IDs don't map to current tag slugs.
-const LEGACY_FEED_PATH =
-  /^(?:\/blog\/feeds\/rss\/categories\/\d+|\/blog\/feeds\/(?:rss|atom)\/latest|\/blog\/rss201\.xml|\/blog\/categories\/(?:[^/]+\/(?:atom|rss201)\.xml|\d+\/rss201\.xml|rss\/?)|\/atom\.xml)\/?$/;
-const LEGACY_FEED_TARGET = '/index.xml';
+// Redirect table. Exact paths win first; patterns are tried in order.
+const REDIRECTS = {
+  exact: {},
+  patterns: [
+    {
+      // Django-era feed URLs (~1,500 polls/month from old RSS readers). Per-tag
+      // mapping isn't faithful — legacy numeric category IDs don't map to current
+      // tag slugs — so everything funnels to the global feed.
+      match:
+        /^(?:\/blog\/feeds\/rss\/categories\/\d+|\/blog\/feeds\/(?:rss|atom)\/latest|\/blog\/rss201\.xml|\/blog\/categories\/(?:[^/]+\/(?:atom|rss201)\.xml|\d+\/rss201\.xml|rss\/?)|\/atom\.xml)\/?$/,
+      target: '/index.xml',
+    },
+  ],
+};
+
+const findRedirect = (path) => {
+  if (path in REDIRECTS.exact) return REDIRECTS.exact[path];
+  for (const r of REDIRECTS.patterns) if (r.match.test(path)) return r.target;
+  return null;
+};
 
 // Order is the tie-breaker when two variants share the same byte count.
 const TEXT_CODECS = [
@@ -205,8 +220,18 @@ const redirect = (location) => ({
   body: '',
 });
 
+const forbidden = () => ({
+  statusCode: 403,
+  headers: {'Content-Type': 'text/plain'},
+  body: 'Forbidden',
+});
+
 export const handler = async (event) => {
   const {path, headers} = event;
-  if (LEGACY_FEED_PATH.test(path)) return redirect(LEGACY_FEED_TARGET);
+  const lcHeaders = {};
+  for (const [k, v] of Object.entries(headers || {})) lcHeaders[k.toLowerCase()] = v;
+  if (!EXPECTED_SECRET || lcHeaders['x-origin-verify'] !== EXPECTED_SECRET) return forbidden();
+  const target = findRedirect(path);
+  if (target) return redirect(target);
   return tryFolder(path, headers);
 };
