@@ -11,6 +11,13 @@ const CACHE_PERIOD = process.env.CACHE_PERIOD || String(60 * 60 * 24 * 3); // 3d
 const FOLDER_SUFFIX = '/index.html';
 const WEBP = {isSupported: /\bimage\/webp\b/i, suffix: '.webp'};
 
+// Django-era feed URLs that still get ~1500 polls/month from old RSS readers.
+// All redirect to the current Hugo global feed; per-tag mapping isn't faithful
+// since the legacy numeric category IDs don't map to current tag slugs.
+const LEGACY_FEED_PATH =
+  /^(?:\/blog\/feeds\/rss\/categories\/\d+|\/blog\/feeds\/(?:rss|atom)\/latest|\/blog\/rss201\.xml|\/blog\/categories\/(?:[^/]+\/(?:atom|rss201)\.xml|\d+\/rss201\.xml|rss\/?)|\/atom\.xml)\/?$/;
+const LEGACY_FEED_TARGET = '/index.xml';
+
 // Order is the tie-breaker when two variants share the same byte count.
 const TEXT_CODECS = [
   {accept: /\bbr\b/i, suffix: '.br', encoding: 'br'},
@@ -188,7 +195,18 @@ const tryFolder = async (path, headers) => {
   };
 };
 
+const redirect = (location) => ({
+  statusCode: 301,
+  headers: {
+    Location: location,
+    'Cache-Control': `public, max-age=${CACHE_PERIOD}`,
+    'Content-Type': 'text/plain',
+  },
+  body: '',
+});
+
 export const handler = async (event) => {
   const {path, headers} = event;
+  if (LEGACY_FEED_PATH.test(path)) return redirect(LEGACY_FEED_TARGET);
   return tryFolder(path, headers);
 };
