@@ -13,6 +13,7 @@
     "synth": "cdk synth",
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
+    "test": "node --test",
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
     "prettier": "prettier --write ."
