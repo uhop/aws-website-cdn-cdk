@@ -12,9 +12,20 @@ const EXPECTED_SECRET = process.env.EXPECTED_SECRET;
 const FOLDER_SUFFIX = '/index.html';
 const WEBP = {isSupported: /\bimage\/webp\b/i, suffix: '.webp'};
 
+const MONTH_ABBR = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
 // Redirect table. Exact paths win first; patterns are tried in order.
+// Patterns expose either a static `target` or a `resolve(match) => string`.
 const REDIRECTS = {
-  exact: {},
+  exact: {
+    // Orphan: no canonical post on 2005-09-23; hand-mapped to the closest from
+    // the openwrt_gui series (2005-09-30). Without this the legacy-format regex
+    // below would synthesize a target that itself 404s.
+    '/blog/2005/sep/23/openwrt_gui/': '/blog/2005-09-30-openwrt_gui_development',
+  },
   patterns: [
     {
       // Django-era feed URLs (~1,500 polls/month from old RSS readers). Per-tag
@@ -24,12 +35,27 @@ const REDIRECTS = {
         /^(?:\/blog\/feeds\/rss\/categories\/\d+|\/blog\/feeds\/(?:rss|atom)\/latest|\/blog\/rss201\.xml|\/blog\/categories\/(?:[^/]+\/(?:atom|rss201)\.xml|\d+\/rss201\.xml|rss\/?)|\/atom\.xml)\/?$/,
       target: '/index.xml',
     },
+    {
+      // Legacy date-path form (was emitted as Hugo aliases until 2026-05-16).
+      // /blog/2014/07/11/heya-unify-back-to-js/  →  /blog/2014-07-11-heya-unify-back-to-js
+      match: /^\/blog\/(\d{4})\/(\d{2})\/(\d{2})\/([a-zA-Z0-9_-]+)\/?$/,
+      resolve: m => `/blog/${m[1]}-${m[2]}-${m[3]}-${m[4]}`,
+    },
+    {
+      // Django text-month form (pre-Hugo era, never aliased).
+      // /blog/2006/may/6/migration-magic-removal/  →  /blog/2006-05-06-migration-magic-removal
+      match: /^\/blog\/(\d{4})\/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\/(\d{1,2})\/([a-zA-Z0-9_-]+)\/?$/,
+      resolve: m => `/blog/${m[1]}-${MONTH_ABBR[m[2]]}-${String(m[3]).padStart(2, '0')}-${m[4]}`,
+    },
   ],
 };
 
 const findRedirect = (path) => {
   if (path in REDIRECTS.exact) return REDIRECTS.exact[path];
-  for (const r of REDIRECTS.patterns) if (r.match.test(path)) return r.target;
+  for (const r of REDIRECTS.patterns) {
+    const m = r.match.exec(path);
+    if (m) return r.resolve ? r.resolve(m) : r.target;
+  }
   return null;
 };
 
