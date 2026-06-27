@@ -27,5 +27,8 @@
     "@aws-sdk/client-s3": "^3.1075.0",
     "aws-cdk-lib": "^2.260.0",
     "mime": "^4.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }
