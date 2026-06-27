@@ -47,10 +47,20 @@ const REDIRECTS = {
       match: /^\/blog\/(\d{4})\/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\/(\d{1,2})\/([a-zA-Z0-9_-]+)\/?$/,
       resolve: m => `/blog/${m[1]}-${MONTH_ABBR[m[2]]}-${String(m[3]).padStart(2, '0')}-${m[4]}`,
     },
+    {
+      // Trailing-slash canonicalization → slashless (sitemap/canonical/og all
+      // emit slashless; root `/` is the sole exception). Hugo's pretty-URL build
+      // also serves the `/path/` form 200 (index.html fallback in tryFolder), so
+      // leaked/bot-saved slash URLs never collapse to canonical. MUST stay last:
+      // the date-path and feed patterns above resolve their own targets and would
+      // otherwise be truncated here to a broken slashless form.
+      match: /^(\/.+)\/$/,
+      resolve: m => m[1],
+    },
   ],
 };
 
-const findRedirect = (path) => {
+export const findRedirect = (path) => {
   if (path in REDIRECTS.exact) return REDIRECTS.exact[path];
   for (const r of REDIRECTS.patterns) {
     const m = r.match.exec(path);
