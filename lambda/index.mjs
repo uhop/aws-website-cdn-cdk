@@ -135,7 +135,7 @@ const headVariant = async (name) => {
   }
 };
 
-const respond = (data, meta, contentType, headers = {}, vary = 'Accept-Encoding') => {
+const buildHeaders = (meta, contentType, headers, vary) => {
   const headersFromMeta = {};
   if (meta.ContentEncoding) headersFromMeta['Content-Encoding'] = meta.ContentEncoding;
   if (meta.ContentLanguage) headersFromMeta['Content-Language'] = meta.ContentLanguage;
@@ -145,19 +145,33 @@ const respond = (data, meta, contentType, headers = {}, vary = 'Accept-Encoding'
   if (vary) headersFromMeta['Vary'] = vary;
 
   return {
-    statusCode: 200,
-    headers: {
-      'Cache-Control': `public, max-age=${CACHE_PERIOD}`,
-      'Content-Type': contentType,
-      ...headersFromMeta,
-      ...headers,
-    },
-    body: typeof data.toBase64 === 'function' ? data.toBase64() : Buffer.from(data.buffer).toString('base64'),
-    isBase64Encoded: true,
+    'Cache-Control': `public, max-age=${CACHE_PERIOD}`,
+    'Content-Type': contentType,
+    ...headersFromMeta,
+    ...headers,
   };
 };
 
-const getObject = async (name, headers, meta) => {
+const respond = (data, meta, contentType, headers = {}, vary = 'Accept-Encoding') => ({
+  statusCode: 200,
+  headers: buildHeaders(meta, contentType, headers, vary),
+  body: typeof data.toBase64 === 'function' ? data.toBase64() : Buffer.from(data.buffer).toString('base64'),
+  isBase64Encoded: true,
+});
+
+const respondHead = (meta, contentType, headers = {}, vary = 'Accept-Encoding') => ({
+  statusCode: 200,
+  headers: buildHeaders(meta, contentType, headers, vary),
+  // Content-Length omitted deliberately: API Gateway recomputes it from the empty
+  // proxy body, so the real representation size can't survive the integration.
+  body: '',
+  isBase64Encoded: false,
+});
+
+// Pick the representation to serve using HEAD probes only (no body fetch), so HEAD
+// and GET resolve to the same variant and headers. Returns the S3 key plus the
+// Content-Type / Content-Encoding / Vary that go with it.
+const resolveVariant = async (name, headers, meta) => {
   const normalizedHeaders = {};
   for (const [key, value] of Object.entries(headers)) {
     normalizedHeaders[key.toLowerCase()] = value;
@@ -170,8 +184,7 @@ const getObject = async (name, headers, meta) => {
   if (kind === 'image' && WEBP.isSupported.test(normalizedHeaders['accept'])) {
     const webpMeta = await headVariant(name + WEBP.suffix);
     if (webpMeta) {
-      const data = await getData(name + WEBP.suffix);
-      return respond(data, meta, 'image/webp', {}, 'Accept');
+      return {key: name + WEBP.suffix, contentType: 'image/webp', headers: {}, vary: 'Accept'};
     }
   } else if (kind === 'compressible' && !meta.ContentEncoding) {
     const accepted = TEXT_CODECS.filter((c) => c.accept.test(acceptEncoding));
@@ -189,17 +202,22 @@ const getObject = async (name, headers, meta) => {
       choices.sort((a, b) => a.size - b.size);
       const winner = choices[0];
       if (winner.encoding) {
-        const data = await getData(name + winner.suffix);
-        return respond(data, meta, contentType, {'Content-Encoding': winner.encoding});
+        return {key: name + winner.suffix, contentType, headers: {'Content-Encoding': winner.encoding}, vary: 'Accept-Encoding'};
       }
     }
   }
 
-  const data = await getData(name);
-  return respond(data, meta, contentType, {}, '');
+  return {key: name, contentType, headers: {}, vary: ''};
 };
 
-const tryFolder = async (path, headers) => {
+const getObject = async (name, method, headers, meta) => {
+  const plan = await resolveVariant(name, headers, meta);
+  if (method === 'HEAD') return respondHead(meta, plan.contentType, plan.headers, plan.vary);
+  const data = await getData(plan.key);
+  return respond(data, meta, plan.contentType, plan.headers, plan.vary);
+};
+
+const tryFolder = async (path, method, headers) => {
   let name = join(PREFIX, path);
   if (name.startsWith('/')) name = name.substring(1);
 
@@ -211,7 +229,7 @@ const tryFolder = async (path, headers) => {
           Key: name,
         }),
       );
-      return getObject(name, headers, meta);
+      return getObject(name, method, headers, meta);
     } catch (error) {
       // squelch
       if (!(error instanceof s3.NotFound)) {
@@ -230,7 +248,7 @@ const tryFolder = async (path, headers) => {
         Key: name,
       }),
     );
-    return getObject(name, headers, meta);
+    return getObject(name, method, headers, meta);
   } catch (error) {
     // squelch
     if (!(error instanceof s3.NotFound)) {
@@ -264,11 +282,11 @@ const forbidden = () => ({
 });
 
 export const handler = async (event) => {
-  const {path, headers} = event;
+  const {path, headers, httpMethod} = event;
   const lcHeaders = {};
   for (const [k, v] of Object.entries(headers || {})) lcHeaders[k.toLowerCase()] = v;
   if (!EXPECTED_SECRET || lcHeaders['x-origin-verify'] !== EXPECTED_SECRET) return forbidden();
   const target = findRedirect(path);
   if (target) return redirect(target);
-  return tryFolder(path, headers);
+  return tryFolder(path, httpMethod, headers);
 };
