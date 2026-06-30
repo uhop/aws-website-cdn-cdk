@@ -4,9 +4,8 @@ import * as cdk from 'aws-cdk-lib';
 import {Template} from 'aws-cdk-lib/assertions';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
 
-// Vacuous until the distribution is brought under IaC (the cdk import); then it
-// enforces that every CloudFront distribution keeps logging to the cloudfront/
-// prefix that bin/analyze-logs ingests.
+// Locks the logging guardrail: every CloudFront distribution must keep access
+// logging to the cloudfront/ prefix bin/analyze-logs ingests.
 test('CloudFront distributions keep access logging to the cloudfront/ prefix', () => {
   const stack = new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test');
   const template = Template.fromStack(stack);

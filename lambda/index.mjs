@@ -168,9 +168,7 @@ const respondHead = (meta, contentType, headers = {}, vary = 'Accept-Encoding') 
   isBase64Encoded: false,
 });
 
-// Pick the representation to serve using HEAD probes only (no body fetch), so HEAD
-// and GET resolve to the same variant and headers. Returns the S3 key plus the
-// Content-Type / Content-Encoding / Vary that go with it.
+// HEAD-probe only (no body fetch), so HEAD and GET resolve to the same variant + headers.
 const resolveVariant = async (name, headers, meta) => {
   const normalizedHeaders = {};
   for (const [key, value] of Object.entries(headers)) {
