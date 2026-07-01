@@ -73,11 +73,12 @@ export const findRedirect = (path) => {
   return null;
 };
 
-// Order is the tie-breaker when two variants share the same byte count.
+// Order is the tie-breaker when two variants share the same byte count. `char` is the
+// x-cache-variant code (see cf/normalize.js) used when the edge token is present.
 const TEXT_CODECS = [
-  {accept: /\bbr\b/i, suffix: '.br', encoding: 'br'},
-  {accept: /\bzstd\b/i, suffix: '.zst', encoding: 'zstd'},
-  {accept: /\bgzip\b/i, suffix: '.gz', encoding: 'gzip'},
+  {accept: /\bbr\b/i, suffix: '.br', encoding: 'br', char: 'b'},
+  {accept: /\bzstd\b/i, suffix: '.zst', encoding: 'zstd', char: 'z'},
+  {accept: /\bgzip\b/i, suffix: '.gz', encoding: 'gzip', char: 'g'},
 ];
 
 const DISPATCH = {
@@ -179,13 +180,20 @@ const resolveVariant = async (name, headers, meta) => {
   const contentType = meta.ContentType || mime.getType(name);
   const kind = DISPATCH[contentType];
 
-  if (kind === 'image' && WEBP.isSupported.test(normalizedHeaders['accept'])) {
+  // The edge-computed x-cache-variant token is authoritative when present — it carries
+  // zstd, which CloudFront strips from Accept-Encoding. Absent (direct-to-API-Gateway, or
+  // before the cfNormalize flag ships) → derive from raw headers. Token grammar: cf/normalize.js.
+  const token = normalizedHeaders['x-cache-variant'];
+  const webpOk = token !== undefined ? token.includes('w') : WEBP.isSupported.test(normalizedHeaders['accept'] || '');
+  const codecOk = token !== undefined ? (c) => token.includes(c.char) : (c) => c.accept.test(acceptEncoding);
+
+  if (kind === 'image' && webpOk) {
     const webpMeta = await headVariant(name + WEBP.suffix);
     if (webpMeta) {
       return {key: name + WEBP.suffix, contentType: 'image/webp', headers: {}, vary: 'Accept'};
     }
   } else if (kind === 'compressible' && !meta.ContentEncoding) {
-    const accepted = TEXT_CODECS.filter((c) => c.accept.test(acceptEncoding));
+    const accepted = TEXT_CODECS.filter(codecOk);
     if (accepted.length > 0) {
       const probes = await Promise.all(
         accepted.map(async (c) => {
