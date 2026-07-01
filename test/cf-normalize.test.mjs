@@ -1,13 +1,18 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {handler, accepted} from '../lib/cf-normalize.draft.mjs';
+import {readFileSync} from 'node:fs';
 
-// Guards the x-cache-variant token grammar in lib/cf-normalize.draft.mjs. The
-// load-bearing invariant is `token === sorted(token)`: the CloudFront Function builds
-// the token by appending in a FROZEN alphabetical order (no runtime sort), so an
-// out-of-place detection line would silently change cache keys. The sweep below turns
-// that into a red test. Order affects only the cache key, never content (the Lambda
-// consumes by membership), so these tests cover the key's canonical form + membership.
+// cf/normalize.js is CloudFront Function source (no ESM export — the runtime has no
+// module system), so evaluate the real file to expose the entry point + helpers. A
+// syntax error in the deployable source therefore fails this suite.
+const src = readFileSync(new URL('../cf/normalize.js', import.meta.url), 'utf8');
+const {handler, accepted} = new Function(`${src}\nreturn {handler, accepted};`)();
+
+// Guards the x-cache-variant token grammar. The load-bearing invariant is
+// `token === sorted(token)`: the function builds the token by appending in a FROZEN
+// alphabetical order (no runtime sort), so an out-of-place detection line would silently
+// change cache keys. The sweep below turns that into a red test. Order affects only the
+// cache key, never content (the Lambda consumes by membership).
 
 // Run the real handler (exercises header extraction, lowercasing, always-set).
 const run = (accept, acceptEncoding) => {
@@ -91,9 +96,7 @@ test('every capability subset emits a canonically-ordered token (frozen-order in
     const ae = encs.length ? encs.join(', ') : '';
     const token = run(accept, ae);
 
-    // canonical: chars are already sorted (built in frozen order, no runtime sort)
     assert.equal(token, [...token].sort().join(''), `not canonical for ${JSON.stringify(subset.map((c) => c.char))}`);
-    // correct membership: exactly this subset's chars, order-independent
     const expected = subset
       .map((c) => c.char)
       .sort()
