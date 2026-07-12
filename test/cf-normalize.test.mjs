@@ -28,7 +28,7 @@ const CHROME_IMG = 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8';
 const SAFARI_IMG = 'image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5';
 
 test('representative clients map to the expected canonical token', () => {
-  assert.equal(run(CHROME_IMG, 'gzip, deflate, br, zstd'), 'bgwz'); // Chrome
+  assert.equal(run(CHROME_IMG, 'gzip, deflate, br, zstd'), 'abgwz'); // Chrome
   assert.equal(run(SAFARI_IMG, 'gzip, deflate, br'), 'bgw'); //         Safari (no zstd)
   assert.equal(run('*/*', 'gzip'), 'g'); //                            curl
   assert.equal(run('*/*', undefined), ''); //                         no Accept-Encoding → identity
@@ -51,8 +51,8 @@ test('q=0 means the client refuses the token', () => {
 });
 
 test('reserved capabilities stay dark even when advertised', () => {
-  // avif + jxl are in the registry but not emitted yet; only webp fires.
-  assert.equal(run('image/avif,image/webp,image/jxl', 'br'), 'bw');
+  // jxl is in the registry but not emitted (no browser advertises it; <picture> route).
+  assert.equal(run('image/avif,image/webp,image/jxl', 'br'), 'abw');
 });
 
 test('noise (ordering, whitespace, deflate, q-values) collapses to one canonical token', () => {
@@ -74,6 +74,7 @@ test('accepted(): presence map of acceptable tokens, exact-token only', () => {
 // The invariant sweep: every subset of the ACTIVE capabilities must emit a token whose
 // chars are in canonical (sorted) order. Fails if a detection line moves out of place.
 const ACTIVE = [
+  {char: 'a', accept: 'image/avif'},
   {char: 'w', accept: 'image/webp'},
   {char: 'b', enc: 'br'},
   {char: 'z', enc: 'zstd'},
@@ -91,7 +92,7 @@ const subsets = (arr) => {
 
 test('every capability subset emits a canonically-ordered token (frozen-order invariant)', () => {
   for (const subset of subsets(ACTIVE)) {
-    const accept = subset.some((c) => c.accept) ? 'text/html,image/webp,*/*' : 'text/html,*/*';
+    const accept = ['text/html', ...subset.filter((c) => c.accept).map((c) => c.accept), '*/*'].join(',');
     const encs = subset.filter((c) => c.enc).map((c) => c.enc);
     const ae = encs.length ? encs.join(', ') : '';
     const token = run(accept, ae);

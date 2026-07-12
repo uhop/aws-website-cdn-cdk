@@ -17,6 +17,15 @@ const HEAD_TABLE = {
   'doc.gz': {ContentLength: 400},
   pic: {ContentType: 'image/png', ContentLength: 5000, ETag: '"p"', LastModified: new Date('2026-07-01T00:00:00Z')},
   'pic.webp': {ContentLength: 2000},
+  'pic.avif': {ContentLength: 1500},
+  // Original already smaller than every variant — identity must win best-match.
+  tiny: {ContentType: 'image/png', ContentLength: 100, ETag: '"t"', LastModified: new Date('2026-07-01T00:00:00Z')},
+  'tiny.webp': {ContentLength: 900},
+  'tiny.avif': {ContentLength: 800},
+  // Suffix-on-top variant keys; s3 sync types .jxl as octet-stream (it doesn't know the ext).
+  'photo.jpg': {ContentType: 'image/jpeg', ContentLength: 4000, ETag: '"j"', LastModified: new Date('2026-07-01T00:00:00Z')},
+  'photo.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3200},
+  'photo.jpg.webp': {ContentLength: 3600},
 };
 
 let handler;
@@ -102,4 +111,50 @@ test('token absent falls back to raw Accept for webp', async () => {
   const res = await handler(event('/pic', {Accept: 'image/webp'}));
   assert.equal(res.headers['Content-Type'], 'image/webp');
   assert.deepEqual(getKeys(), ['pic.webp']);
+});
+
+test('image best-match-by-size picks the smallest accepted variant', async () => {
+  const res = await handler(event('/pic', {'x-cache-variant': 'aw'}));
+  assert.equal(res.headers['Content-Type'], 'image/avif'); // 1500 < 2000 (webp) < 5000 (original)
+  assert.equal(res.headers['Vary'], 'Accept');
+  assert.deepEqual(getKeys(), ['pic.avif']);
+});
+
+test('a smaller variant outside the accepted set never wins', async () => {
+  const res = await handler(event('/pic', {'x-cache-variant': 'w'}));
+  assert.equal(res.headers['Content-Type'], 'image/webp'); // avif is smaller but not accepted
+  assert.deepEqual(getKeys(), ['pic.webp']);
+});
+
+test('identity wins best-match when the original is smallest', async () => {
+  const res = await handler(event('/tiny', {'x-cache-variant': 'aw'}));
+  assert.equal(res.headers['Content-Type'], 'image/png');
+  assert.equal(res.headers['Vary'], 'Accept');
+  assert.deepEqual(getKeys(), ['tiny']);
+});
+
+test('token absent falls back to raw Accept for avif', async () => {
+  const res = await handler(event('/pic', {Accept: 'image/avif,image/webp'}));
+  assert.equal(res.headers['Content-Type'], 'image/avif');
+  assert.deepEqual(getKeys(), ['pic.avif']);
+});
+
+test('direct .jxl request is an exact pass-through, typed from the name, never re-negotiated', async () => {
+  const res = await handler(event('/photo.jpg.jxl', {'x-cache-variant': 'aw', Accept: 'image/avif,image/webp'}));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['Content-Type'], 'image/jxl'); // octet-stream S3 meta recovered from the name
+  assert.equal(res.headers['Content-Encoding'], undefined);
+  assert.deepEqual(getKeys(), ['photo.jpg.jxl']); // no sibling probes: the smaller webp is ignored
+});
+
+test('missing markup-referenced variant falls back to the base object and negotiates', async () => {
+  const res = await handler(event('/photo.jpg.avif', {'x-cache-variant': 'w'}));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['Content-Type'], 'image/webp'); // photo.jpg.avif absent → base photo.jpg → webp wins
+  assert.deepEqual(getKeys(), ['photo.jpg.webp']);
+});
+
+test('missing variant of a missing base still 404s', async () => {
+  const res = await handler(event('/ghost.jpg.jxl', {'x-cache-variant': 'aw'}));
+  assert.equal(res.statusCode, 404);
 });

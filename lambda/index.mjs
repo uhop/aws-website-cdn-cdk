@@ -10,7 +10,18 @@ const CACHE_PERIOD = process.env.CACHE_PERIOD || String(60 * 60 * 24 * 3); // 3d
 const EXPECTED_SECRET = process.env.EXPECTED_SECRET;
 
 const FOLDER_SUFFIX = '/index.html';
-const WEBP = {isSupported: /\bimage\/webp\b/i, suffix: '.webp'};
+
+// Order is the tie-breaker when two variants share the same byte count (modern first).
+// `char` is the x-cache-variant code (see cf/normalize.js). No jxl entry: no browser
+// advertises image/jxl in Accept — .jxl is reached only by direct <picture> URLs.
+const IMAGE_CODECS = [
+  {accept: /\bimage\/avif\b/i, suffix: '.avif', contentType: 'image/avif', char: 'a'},
+  {accept: /\bimage\/webp\b/i, suffix: '.webp', contentType: 'image/webp', char: 'w'},
+];
+
+// Direct variant URLs (exact pass-through, never re-negotiated) that markup may
+// hardcode — a miss falls back to the base object instead of a 404.
+const IMAGE_VARIANT_SUFFIX = /\.(webp|avif|jxl)$/;
 
 const MONTH_ABBR = {
   jan: '01',
@@ -177,21 +188,39 @@ const resolveVariant = async (name, headers, meta) => {
   }
 
   const acceptEncoding = normalizedHeaders['accept-encoding'] || '';
-  const contentType = meta.ContentType || mime.getType(name);
+  // `aws s3 sync` types extensions it doesn't know (.jxl) as */octet-stream — the name
+  // is more specific there.
+  const contentType =
+    !meta.ContentType || meta.ContentType.endsWith('/octet-stream')
+      ? mime.getType(name) || meta.ContentType
+      : meta.ContentType;
   const kind = DISPATCH[contentType];
 
   // The edge-computed x-cache-variant token is authoritative when present — it carries
   // zstd, which CloudFront strips from Accept-Encoding. Absent (direct-to-API-Gateway, or
   // before the cfNormalize flag ships) → derive from raw headers. Token grammar: cf/normalize.js.
   const token = normalizedHeaders['x-cache-variant'];
-  const webpOk = token !== undefined ? token.includes('w') : WEBP.isSupported.test(normalizedHeaders['accept'] || '');
+  const formatOk = token !== undefined ? (c) => token.includes(c.char) : (c) => c.accept.test(normalizedHeaders['accept'] || '');
   const codecOk = token !== undefined ? (c) => token.includes(c.char) : (c) => c.accept.test(acceptEncoding);
 
-  if (kind === 'image' && webpOk) {
-    const webpMeta = await headVariant(name + WEBP.suffix);
-    if (webpMeta) {
-      return {key: name + WEBP.suffix, contentType: 'image/webp', headers: {}, vary: 'Accept'};
+  if (kind === 'image') {
+    const accepted = IMAGE_CODECS.filter(formatOk);
+    if (accepted.length > 0) {
+      const probes = await Promise.all(
+        accepted.map(async (c) => {
+          const variantMeta = await headVariant(name + c.suffix);
+          return variantMeta ? {...c, size: variantMeta.ContentLength} : null;
+        }),
+      );
+      const choices = probes.filter(Boolean);
+      // Identity is always a valid candidate; its size is already known from the original HEAD.
+      choices.push({suffix: '', contentType, size: meta.ContentLength});
+      // Stable sort: when sizes tie, IMAGE_CODECS order wins, identity loses (pushed last).
+      choices.sort((a, b) => a.size - b.size);
+      const winner = choices[0];
+      return {key: name + winner.suffix, contentType: winner.contentType, headers: {}, vary: 'Accept'};
     }
+    return {key: name, contentType, headers: {}, vary: 'Accept'};
   } else if (kind === 'compressible' && !meta.ContentEncoding) {
     const accepted = TEXT_CODECS.filter(codecOk);
     if (accepted.length > 0) {
@@ -228,18 +257,25 @@ const tryFolder = async (path, method, headers) => {
   if (name.startsWith('/')) name = name.substring(1);
 
   if (name && !name.endsWith('/')) {
-    try {
-      const meta = await s3Client.send(
-        new s3.HeadObjectCommand({
-          Bucket: BUCKET,
-          Key: name,
-        }),
-      );
-      return getObject(name, method, headers, meta);
-    } catch (error) {
-      // squelch
-      if (!(error instanceof s3.NotFound)) {
-        console.error('Error checking original object:', name, error);
+    // A markup-hardcoded variant URL (<source srcset="….jxl">) must not 404 when its
+    // sibling went missing at build (a codec silently absent) — retry the base name,
+    // which then negotiates normally.
+    const variant = IMAGE_VARIANT_SUFFIX.exec(name);
+    const candidates = variant ? [name, name.slice(0, -variant[0].length)] : [name];
+    for (const key of candidates) {
+      try {
+        const meta = await s3Client.send(
+          new s3.HeadObjectCommand({
+            Bucket: BUCKET,
+            Key: key,
+          }),
+        );
+        return getObject(key, method, headers, meta);
+      } catch (error) {
+        // squelch
+        if (!(error instanceof s3.NotFound)) {
+          console.error('Error checking original object:', key, error);
+        }
       }
     }
   }

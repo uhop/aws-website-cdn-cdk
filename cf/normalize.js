@@ -27,11 +27,12 @@ const variant = (accept, ae) => {
   let v = '';
   // Frozen alphabetical-by-char order — append on match; canonical without a sort.
   // Reserved slots keep each future char's fixed position: fill in place, never reorder.
-  // if (fmt['image/avif'])    v += 'a';   // reserved — enable when .avif produced
+  if (fmt['image/avif']) v += 'a';
   if (enc['br']) v += 'b';
   if (enc['gzip']) v += 'g';
   // (h) reserved — heic has no reliable Accept token for web delivery
-  // (j) reserved — jxl: no browser advertises image/jxl yet
+  // (j) reserved — jxl: no browser advertises image/jxl in Accept (Safari decodes
+  //     it but stays silent — reached via <picture><source> markup instead)
   // if (fmt['text/markdown']) v += 'm';   // reserved — enable when .md ships
   if (fmt['image/webp']) v += 'w';
   if (enc['zstd']) v += 'z';
