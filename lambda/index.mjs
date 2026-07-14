@@ -190,10 +190,7 @@ const resolveVariant = async (name, headers, meta) => {
   const acceptEncoding = normalizedHeaders['accept-encoding'] || '';
   // `aws s3 sync` types extensions it doesn't know (.jxl) as */octet-stream — the name
   // is more specific there.
-  const contentType =
-    !meta.ContentType || meta.ContentType.endsWith('/octet-stream')
-      ? mime.getType(name) || meta.ContentType
-      : meta.ContentType;
+  const contentType = !meta.ContentType || meta.ContentType.endsWith('/octet-stream') ? mime.getType(name) || meta.ContentType : meta.ContentType;
   const kind = DISPATCH[contentType];
 
   // The edge-computed x-cache-variant token is authoritative when present — it carries
