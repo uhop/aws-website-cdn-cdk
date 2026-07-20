@@ -4,16 +4,15 @@ import * as cdk from 'aws-cdk-lib';
 import {Template} from 'aws-cdk-lib/assertions';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
 
-// Locks the logging guardrail: every CloudFront distribution must keep access
-// logging to the cloudfront/ prefix bin/analyze-logs ingests.
-test('CloudFront distributions keep access logging to the cloudfront/ prefix', () => {
+// Legacy standard logging was retired at the 2026-07-14 ingest cutover; v2 below
+// is the only stream. Locks the retirement so it can't drift back and resume
+// writing raw-IP logs to the cloudfront/ prefix nothing ingests any more.
+test('CloudFront distributions carry no legacy access logging', () => {
   const stack = new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test');
   const template = Template.fromStack(stack);
 
   for (const [logicalId, resource] of Object.entries(template.findResources('AWS::CloudFront::Distribution'))) {
-    const logging = resource.Properties?.DistributionConfig?.Logging;
-    assert.ok(logging, `${logicalId}: access logging must be enabled`);
-    assert.equal(logging.Prefix, 'cloudfront/', `${logicalId}: log prefix must be cloudfront/`);
+    assert.equal(resource.Properties?.DistributionConfig?.Logging, undefined, `${logicalId}: legacy logging must stay retired`);
   }
 });
 
