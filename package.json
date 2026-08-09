@@ -9,7 +9,8 @@
   },
   "scripts": {
     "cdk": "cdk",
-    "diff": "cdk diff",
+    "diff": "cdk diff --method=template",
+    "diff:changeset": "cdk diff",
     "synth": "cdk synth",
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
