@@ -1,9 +1,9 @@
 // CloudFront Function (viewer-request, cloudfront-js-2.0). Two jobs, in order:
 // 301 any non-canonical Host to www.lazutkin.com, then normalize Accept /
-// Accept-Encoding into the `x-cache-variant` cache-key token. Read verbatim as the
-// function body by lib/aws-website-cdn-cdk-stack.mjs. No export — the runtime has no
-// module system; test/cf-normalize.test.mjs evaluates this file to test it. Token
-// registry + design: projects/aws-website-cdn-cdk/decisions § Tier 1 (vault).
+// Accept-Encoding and a .jxl URL suffix into the `x-cache-variant` cache-key token.
+// Read verbatim as the function body by lib/aws-website-cdn-cdk-stack.mjs. No export —
+// the runtime has no module system; test/cf-normalize.test.mjs evaluates this file to
+// test it. Token registry + design: projects/aws-website-cdn-cdk/decisions § Tier 1 (vault).
 
 // CloudFront always answers on the distribution's own d*.cloudfront.net default domain
 // and AWS offers no switch to disable it, so the site is reachable under two names.
@@ -11,6 +11,11 @@
 // need not join the cache key: a redirect can never be stored against the canonical host.
 // Doing this any later (origin Lambda, origin-response) would require exactly that.
 const CANONICAL_HOST = 'www.lazutkin.com';
+
+// No browser lists image/jxl in Accept: a .jxl URL, taken from a <picture> source the
+// browser chose by type, is the only sign it decodes JXL. The suffix becomes `j`; the
+// access log still records the viewer's URI (measured 2026-10-13).
+const JXL_URI = /[^/]\.jxl$/;
 
 // forwardedValues.queryString is false, so the origin never sees a query string — but the
 // viewer's copy still has to survive the hop, or a shared /search?q=… loses its query.
@@ -46,7 +51,7 @@ const accepted = (headerValue) =>
     return set;
   }, Object.create(null));
 
-const variant = (accept, ae) => {
+const variant = (accept, ae, jxl) => {
   const fmt = accepted(accept);
   const enc = accepted(ae);
   let v = '';
@@ -56,8 +61,7 @@ const variant = (accept, ae) => {
   if (enc['br']) v += 'b';
   if (enc['gzip']) v += 'g';
   // (h) reserved — heic has no reliable Accept token for web delivery
-  // (j) reserved — jxl: no browser advertises image/jxl in Accept (Safari decodes
-  //     it but stays silent — reached via <picture><source> markup instead)
+  if (jxl || fmt['image/jxl']) v += 'j';
   // if (fmt['text/markdown']) v += 'm';   // reserved — enable when .md ships
   if (fmt['image/webp']) v += 'w';
   if (enc['zstd']) v += 'z';
@@ -83,6 +87,8 @@ function handler(event) {
 
   const accept = h.accept ? h.accept.value.toLowerCase() : '';
   const ae = h['accept-encoding'] ? h['accept-encoding'].value.toLowerCase() : '';
-  h['x-cache-variant'] = {value: variant(accept, ae)};
+  const jxl = JXL_URI.test(request.uri);
+  if (jxl) request.uri = request.uri.slice(0, -4);
+  h['x-cache-variant'] = {value: variant(accept, ae, jxl)};
   return request;
 }

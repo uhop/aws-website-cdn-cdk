@@ -16,13 +16,14 @@ const {handler, accepted, CANONICAL_HOST} = new Function(`${src}\nreturn {handle
 
 // Run the real handler (exercises header extraction, lowercasing, always-set). The
 // canonical Host is mandatory: without it the handler 301s and never reaches the token.
-const run = (accept, acceptEncoding) => {
+const normalize = (uri, accept, acceptEncoding) => {
   const headers = {host: {value: CANONICAL_HOST}};
   if (accept !== undefined) headers.accept = {value: accept};
   if (acceptEncoding !== undefined) headers['accept-encoding'] = {value: acceptEncoding};
-  const out = handler({request: {headers}});
-  return out.headers['x-cache-variant'].value;
+  return handler({request: {headers, uri}});
 };
+
+const run = (accept, acceptEncoding) => normalize('/', accept, acceptEncoding).headers['x-cache-variant'].value;
 
 // Non-canonical hosts: returns a response object, so there is no .headers['x-cache-variant'].
 const redirect = (host, uri = '/', querystring = {}) => handler({request: {headers: host === undefined ? {} : {host: {value: host}}, uri, querystring}});
@@ -40,7 +41,7 @@ test('representative clients map to the expected canonical token', () => {
 });
 
 test('always set, even when empty (presence is the "function ran" signal)', () => {
-  const out = handler({request: {headers: {host: {value: CANONICAL_HOST}}}});
+  const out = handler({request: {headers: {host: {value: CANONICAL_HOST}}, uri: '/'}});
   assert.equal(out.headers['x-cache-variant'].value, '');
 });
 
@@ -98,8 +99,40 @@ test('q=0 means the client refuses the token', () => {
 });
 
 test('reserved capabilities stay dark even when advertised', () => {
-  // jxl is in the registry but not emitted (no browser advertises it; <picture> route).
-  assert.equal(run('image/avif,image/webp,image/jxl', 'br'), 'abw');
+  assert.equal(run('image/avif,image/webp,image/heic', 'br'), 'abw');
+});
+
+test('a .jxl URL is stripped to its base and sets j', () => {
+  const out = normalize('/blog/x/cover.jpg.jxl', CHROME_IMG, 'gzip, deflate, br, zstd');
+  assert.equal(out.uri, '/blog/x/cover.jpg');
+  assert.equal(out.headers['x-cache-variant'].value, 'abgjwz');
+});
+
+test('a URL without the .jxl suffix keeps its path and gets no j', () => {
+  const out = normalize('/blog/x/cover.jpg', CHROME_IMG, 'gzip, deflate, br, zstd');
+  assert.equal(out.uri, '/blog/x/cover.jpg');
+  assert.equal(out.headers['x-cache-variant'].value, 'abgwz');
+  assert.equal(normalize('/blog/x/cover.jxl.jpg', '*/*', '').uri, '/blog/x/cover.jxl.jpg');
+});
+
+test('a bare .jxl segment is not a variant URL', () => {
+  for (const uri of ['/.jxl', '/blog/.jxl']) {
+    const out = normalize(uri, '*/*', '');
+    assert.equal(out.uri, uri);
+    assert.equal(out.headers['x-cache-variant'].value, '');
+  }
+});
+
+test('image/jxl in Accept sets j without touching the URL', () => {
+  const out = normalize('/blog/x/cover.jpg', 'image/jxl,image/webp', '');
+  assert.equal(out.uri, '/blog/x/cover.jpg');
+  assert.equal(out.headers['x-cache-variant'].value, 'jw');
+  assert.equal(normalize('/blog/x/cover.jpg.jxl', 'image/jxl', '').headers['x-cache-variant'].value, 'j');
+});
+
+test('the canonical-host redirect keeps the .jxl suffix', () => {
+  const out = redirect('d2ex5t147aa14w.cloudfront.net', '/blog/x/cover.jpg.jxl');
+  assert.equal(out.headers.location.value, 'https://www.lazutkin.com/blog/x/cover.jpg.jxl');
 });
 
 test('noise (ordering, whitespace, deflate, q-values) collapses to one canonical token', () => {
@@ -122,6 +155,7 @@ test('accepted(): presence map of acceptable tokens, exact-token only', () => {
 // chars are in canonical (sorted) order. Fails if a detection line moves out of place.
 const ACTIVE = [
   {char: 'a', accept: 'image/avif'},
+  {char: 'j', accept: 'image/jxl'},
   {char: 'w', accept: 'image/webp'},
   {char: 'b', enc: 'br'},
   {char: 'z', enc: 'zstd'},

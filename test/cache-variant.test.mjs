@@ -26,16 +26,16 @@ const HEAD_TABLE = {
   'photo.jpg': {ContentType: 'image/jpeg', ContentLength: 4000, ETag: '"j"', LastModified: new Date('2026-07-01T00:00:00Z')},
   'photo.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3200},
   'photo.jpg.webp': {ContentLength: 3600},
-  // WebP < AVIF < JXL < JPEG: a .jxl request is served the smallest the token allows.
+  // WebP < AVIF < JXL < JPEG: a token with j is served the smallest it allows.
   'shot.jpg': {ContentType: 'image/jpeg', ContentLength: 4000, ETag: '"s"', LastModified: new Date('2026-07-01T00:00:00Z')},
   'shot.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3000},
   'shot.jpg.webp': {ContentLength: 2500},
   'shot.jpg.avif': {ContentLength: 2800},
-  // JXL and WebP of the same size: the tie goes to the requested JXL.
+  // JXL and WebP of the same size: the tie goes to the JXL (IMAGE_CODECS order).
   'tie.jpg': {ContentType: 'image/jpeg', ContentLength: 4000, ETag: '"e"', LastModified: new Date('2026-07-01T00:00:00Z')},
   'tie.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3000},
   'tie.jpg.webp': {ContentLength: 3000},
-  // A JXL whose base JPEG is gone.
+  // A JXL whose base JPEG is gone; the deploy never leaves one.
   'orphan.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3000},
 };
 
@@ -150,8 +150,8 @@ test('token absent falls back to raw Accept for avif', async () => {
   assert.deepEqual(getKeys(), ['pic.avif']);
 });
 
-test('a .jxl request serves the JXL when it is the smallest accepted candidate', async () => {
-  const res = await handler(event('/photo.jpg.jxl', {'x-cache-variant': 'aw'}));
+test('j serves the JXL when it is the smallest accepted candidate', async () => {
+  const res = await handler(event('/photo.jpg', {'x-cache-variant': 'ajw'}));
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['Content-Type'], 'image/jxl'); // 3200 < 3600 (webp) < 4000 (jpeg)
   assert.equal(res.headers['Content-Encoding'], undefined);
@@ -160,45 +160,61 @@ test('a .jxl request serves the JXL when it is the smallest accepted candidate',
   assert.deepEqual(getKeys(), ['photo.jpg.jxl']);
 });
 
-test('a .jxl request is served a smaller WebP under the same URL', async () => {
-  const res = await handler(event('/shot.jpg.jxl', {'x-cache-variant': 'aw'}));
-  assert.equal(res.statusCode, 200);
+test('without j a smaller JXL is never served', async () => {
+  const res = await handler(event('/photo.jpg', {'x-cache-variant': 'aw'}));
+  assert.equal(res.headers['Content-Type'], 'image/webp'); // jxl 3200 is smaller but not accepted
+  assert.deepEqual(getKeys(), ['photo.jpg.webp']);
+});
+
+test('j weighs the JXL against a smaller WebP', async () => {
+  const res = await handler(event('/shot.jpg', {'x-cache-variant': 'ajw'}));
   assert.equal(res.headers['Content-Type'], 'image/webp'); // 2500 < 2800 (avif) < 3000 (jxl)
   assert.equal(res.headers['Vary'], 'Accept');
   assert.deepEqual(getKeys(), ['shot.jpg.webp']);
 });
 
-test('a .jxl request weighs only the formats the token allows, plus the JXL', async () => {
-  const res = await handler(event('/shot.jpg.jxl', {'x-cache-variant': 'a'}));
+test('j weighs only the formats the token allows', async () => {
+  const res = await handler(event('/shot.jpg', {'x-cache-variant': 'aj'}));
   assert.equal(res.headers['Content-Type'], 'image/avif'); // webp is smaller but not accepted
   assert.deepEqual(getKeys(), ['shot.jpg.avif']);
 });
 
-test('a .jxl request with no image format in the token weighs the JXL against the original', async () => {
-  const res = await handler(event('/shot.jpg.jxl', {'x-cache-variant': ''}));
+test('j alone weighs the JXL against the original', async () => {
+  const res = await handler(event('/shot.jpg', {'x-cache-variant': 'j'}));
   assert.equal(res.headers['Content-Type'], 'image/jxl'); // 3000 < 4000 (jpeg)
   assert.deepEqual(getKeys(), ['shot.jpg.jxl']);
 });
 
-test('a size tie on a .jxl request goes to the JXL', async () => {
-  const res = await handler(event('/tie.jpg.jxl', {'x-cache-variant': 'w'}));
+test('a size tie between the JXL and WebP goes to the JXL', async () => {
+  const res = await handler(event('/tie.jpg', {'x-cache-variant': 'jw'}));
   assert.equal(res.headers['Content-Type'], 'image/jxl');
   assert.deepEqual(getKeys(), ['tie.jpg.jxl']);
 });
 
-test('HEAD on a .jxl URL resolves the same winner without fetching a body', async () => {
-  const res = await handler({...event('/shot.jpg.jxl', {'x-cache-variant': 'aw'}), httpMethod: 'HEAD'});
+test('HEAD with j resolves the same winner without fetching a body', async () => {
+  const res = await handler({...event('/shot.jpg', {'x-cache-variant': 'ajw'}), httpMethod: 'HEAD'});
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['Content-Type'], 'image/webp');
   assert.equal(res.body, '');
   assert.deepEqual(getKeys(), []);
 });
 
-test('a .jxl whose base is missing passes through, typed from the name', async () => {
-  const res = await handler(event('/orphan.jpg.jxl', {'x-cache-variant': 'aw'}));
+test('token absent falls back to raw Accept for jxl', async () => {
+  const res = await handler(event('/photo.jpg', {Accept: 'image/jxl,image/webp'}));
+  assert.equal(res.headers['Content-Type'], 'image/jxl');
+  assert.deepEqual(getKeys(), ['photo.jpg.jxl']);
+});
+
+test('a .jxl URL that reaches the Lambda unstripped passes through, typed from the name', async () => {
+  const res = await handler(event('/shot.jpg.jxl', {'x-cache-variant': 'ajw'}));
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['Content-Type'], 'image/jxl'); // octet-stream S3 meta recovered from the name
-  assert.deepEqual(getKeys(), ['orphan.jpg.jxl']);
+  assert.deepEqual(getKeys(), ['shot.jpg.jxl']); // the smaller webp is not considered
+});
+
+test('a stripped .jxl whose base is gone 404s', async () => {
+  const res = await handler(event('/orphan.jpg', {'x-cache-variant': 'j'}));
+  assert.equal(res.statusCode, 404);
 });
 
 test('a missing .jxl falls back to the base object and negotiates without it', async () => {
