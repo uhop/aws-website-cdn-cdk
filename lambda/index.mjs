@@ -13,14 +13,14 @@ const FOLDER_SUFFIX = '/index.html';
 
 // Order is the tie-breaker when two variants share the same byte count (modern first).
 // `char` is the x-cache-variant code (see cf/normalize.js). No jxl entry: no browser
-// advertises image/jxl in Accept — .jxl is reached only by direct <picture> URLs.
+// advertises image/jxl in Accept — a .jxl request is the signal instead (tryFolder).
 const IMAGE_CODECS = [
   {accept: /\bimage\/avif\b/i, suffix: '.avif', contentType: 'image/avif', char: 'a'},
   {accept: /\bimage\/webp\b/i, suffix: '.webp', contentType: 'image/webp', char: 'w'},
 ];
 
-// Direct variant URLs (exact pass-through, never re-negotiated) that markup may
-// hardcode — a miss falls back to the base object instead of a 404.
+// Direct variant URLs that markup may hardcode — a miss falls back to the base object
+// instead of a 404. .webp and .avif pass through exactly; .jxl negotiates (tryFolder).
 const IMAGE_VARIANT_SUFFIX = /\.(webp|avif|jxl)$/;
 
 const MONTH_ABBR = {
@@ -181,7 +181,7 @@ const respondHead = (meta, contentType, headers = {}, vary = 'Accept-Encoding') 
 });
 
 // HEAD-probe only (no body fetch), so HEAD and GET resolve to the same variant + headers.
-const resolveVariant = async (name, headers, meta) => {
+const resolveVariant = async (name, headers, meta, extra = []) => {
   const normalizedHeaders = {};
   for (const [key, value] of Object.entries(headers)) {
     normalizedHeaders[key.toLowerCase()] = value;
@@ -202,22 +202,18 @@ const resolveVariant = async (name, headers, meta) => {
 
   if (kind === 'image') {
     const accepted = IMAGE_CODECS.filter(formatOk);
-    if (accepted.length > 0) {
-      const probes = await Promise.all(
-        accepted.map(async (c) => {
-          const variantMeta = await headVariant(name + c.suffix);
-          return variantMeta ? {...c, size: variantMeta.ContentLength} : null;
-        }),
-      );
-      const choices = probes.filter(Boolean);
-      // Identity is always a valid candidate; its size is already known from the original HEAD.
-      choices.push({suffix: '', contentType, size: meta.ContentLength});
-      // Stable sort: when sizes tie, IMAGE_CODECS order wins, identity loses (pushed last).
-      choices.sort((a, b) => a.size - b.size);
-      const winner = choices[0];
-      return {key: name + winner.suffix, contentType: winner.contentType, headers: {}, vary: 'Accept'};
-    }
-    return {key: name, contentType, headers: {}, vary: 'Accept'};
+    const probes = await Promise.all(
+      accepted.map(async (c) => {
+        const variantMeta = await headVariant(name + c.suffix);
+        return variantMeta ? {...c, size: variantMeta.ContentLength} : null;
+      }),
+    );
+    // Identity is always a valid candidate; its size is already known from the original HEAD.
+    const choices = [...extra, ...probes.filter(Boolean), {suffix: '', contentType, size: meta.ContentLength}];
+    // Stable sort: when sizes tie, extra candidates win, then IMAGE_CODECS order, identity last.
+    choices.sort((a, b) => a.size - b.size);
+    const winner = choices[0];
+    return {key: name + winner.suffix, contentType: winner.contentType, headers: {}, vary: 'Accept'};
   } else if (kind === 'compressible' && !meta.ContentEncoding) {
     const accepted = TEXT_CODECS.filter(codecOk);
     if (accepted.length > 0) {
@@ -242,8 +238,8 @@ const resolveVariant = async (name, headers, meta) => {
   return {key: name, contentType, headers: {}, vary: ''};
 };
 
-const getObject = async (name, method, headers, meta) => {
-  const plan = await resolveVariant(name, headers, meta);
+const getObject = async (name, method, headers, meta, extra) => {
+  const plan = await resolveVariant(name, headers, meta, extra);
   if (method === 'HEAD') return respondHead(meta, plan.contentType, plan.headers, plan.vary);
   const data = await getData(plan.key);
   return respond(data, meta, plan.contentType, plan.headers, plan.vary);
@@ -254,10 +250,21 @@ const tryFolder = async (path, method, headers) => {
   if (name.startsWith('/')) name = name.substring(1);
 
   if (name && !name.endsWith('/')) {
+    const variant = IMAGE_VARIANT_SUFFIX.exec(name);
+    // Browsers reach a .jxl URL only through a <picture> source they chose by its type,
+    // so the request says the browser decodes JXL: negotiate the base with the JXL as one
+    // more candidate, and serve whichever is smallest under this URL.
+    if (variant?.[1] === 'jxl') {
+      const base = name.slice(0, -variant[0].length);
+      const [jxlMeta, baseMeta] = await Promise.all([headVariant(name), headVariant(base)]);
+      if (jxlMeta && baseMeta) {
+        const jxl = {suffix: variant[0], contentType: 'image/jxl', size: jxlMeta.ContentLength};
+        return getObject(base, method, headers, baseMeta, [jxl]);
+      }
+    }
     // A markup-hardcoded variant URL (<source srcset="….jxl">) must not 404 when its
     // sibling went missing at build (a codec silently absent) — retry the base name,
     // which then negotiates normally.
-    const variant = IMAGE_VARIANT_SUFFIX.exec(name);
     const candidates = variant ? [name, name.slice(0, -variant[0].length)] : [name];
     for (const key of candidates) {
       try {
