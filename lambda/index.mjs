@@ -7,6 +7,7 @@ import * as s3 from '@aws-sdk/client-s3';
 const BUCKET = process.env.BUCKET;
 const PREFIX = process.env.PREFIX || '/';
 const CACHE_PERIOD = process.env.CACHE_PERIOD || String(60 * 60 * 24 * 3); // 3d
+const TEXT_CACHE_PERIOD = process.env.TEXT_CACHE_PERIOD || String(60 * 3); // 3m
 const EXPECTED_SECRET = process.env.EXPECTED_SECRET;
 
 const FOLDER_SUFFIX = '/index.html';
@@ -117,6 +118,26 @@ const DISPATCH = {
   'font/otf': 'compressible',
 };
 
+// Text a deploy rewrites under the same name. The invalidation cannot reach a browser's
+// copy, so browsers recheck after TEXT_CACHE_PERIOD; CloudFront keeps CACHE_PERIOD.
+// CSS and JS stay long.
+const SHORT_LIVED = new Set([
+  'text/html',
+  'text/plain',
+  'text/xml',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/xml',
+  'application/manifest+json',
+  'application/ld+json',
+  'application/atom+xml',
+  'application/rss+xml',
+]);
+
+const cacheControl = (contentType) =>
+  SHORT_LIVED.has(contentType) ? `public, max-age=${TEXT_CACHE_PERIOD}, s-maxage=${CACHE_PERIOD}` : `public, max-age=${CACHE_PERIOD}`;
+
 const s3Client = new s3.S3Client();
 
 const getData = async (name) => {
@@ -159,7 +180,7 @@ const buildHeaders = (meta, contentType, headers, vary) => {
   if (vary) headersFromMeta['Vary'] = vary;
 
   return {
-    'Cache-Control': `public, max-age=${CACHE_PERIOD}`,
+    'Cache-Control': cacheControl(contentType),
     'Content-Type': contentType,
     ...headersFromMeta,
     ...headers,
