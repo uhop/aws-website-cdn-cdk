@@ -119,6 +119,9 @@ const cacheControl = (contentType) =>
 
 const s3Client = new s3.S3Client();
 
+// A miss is a 404 only because the role holds s3:ListBucket (the stack); any other error is logged.
+const isMissing = (error) => error instanceof s3.NotFound;
+
 const getData = async (name) => {
   const response = await s3Client.send(
     new s3.GetObjectCommand({
@@ -138,13 +141,7 @@ const headVariant = async (name) => {
       }),
     );
   } catch (error) {
-    if (error instanceof s3.S3ServiceException) {
-      if (error.name !== 'AccessDenied' && error.name !== 'NoSuchKey' && error.name !== 'NotFound') {
-        console.error('Error checking variant (s3):', name, error);
-      }
-    } else {
-      console.error('Error checking variant (other):', name, error);
-    }
+    if (!isMissing(error)) console.error('Error checking variant:', name, error);
     return null;
   }
 };
@@ -267,10 +264,7 @@ const tryFolder = async (path, method, headers) => {
         );
         return getObject(key, method, headers, meta);
       } catch (error) {
-        // squelch
-        if (!(error instanceof s3.NotFound)) {
-          console.error('Error checking original object:', key, error);
-        }
+        if (!isMissing(error)) console.error('Error checking original object:', key, error);
       }
     }
   }
@@ -287,10 +281,7 @@ const tryFolder = async (path, method, headers) => {
     );
     return getObject(name, method, headers, meta);
   } catch (error) {
-    // squelch
-    if (!(error instanceof s3.NotFound)) {
-      console.error('Error checking path object:', name, error);
-    }
+    if (!isMissing(error)) console.error('Error checking path object:', name, error);
   }
 
   return {
