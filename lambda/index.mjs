@@ -95,28 +95,7 @@ const TEXT_CODECS = [
   {accept: /\bgzip\b/i, suffix: '.gz', encoding: 'gzip', char: 'g'},
 ];
 
-const DISPATCH = {
-  'image/jpeg': 'image',
-  'image/png': 'image',
-  'text/plain': 'compressible',
-  'text/html': 'compressible',
-  'text/css': 'compressible',
-  'text/xml': 'compressible',
-  'text/markdown': 'compressible',
-  'text/csv': 'compressible',
-  'application/javascript': 'compressible',
-  'application/json': 'compressible',
-  'application/xml': 'compressible',
-  'application/wasm': 'compressible',
-  'application/manifest+json': 'compressible',
-  'application/ld+json': 'compressible',
-  'application/atom+xml': 'compressible',
-  'application/rss+xml': 'compressible',
-  'image/svg+xml': 'compressible',
-  'image/bmp': 'compressible',
-  'font/ttf': 'compressible',
-  'font/otf': 'compressible',
-};
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png']);
 
 // Text a deploy rewrites under the same name. The invalidation cannot reach a browser's
 // copy, so browsers recheck after TEXT_CACHE_PERIOD; CloudFront keeps CACHE_PERIOD.
@@ -214,7 +193,6 @@ const resolveVariant = async (name, headers, meta) => {
   // `aws s3 sync` types extensions it doesn't know (.jxl) as */octet-stream — the name
   // is more specific there.
   const contentType = !meta.ContentType || meta.ContentType.endsWith('/octet-stream') ? mime.getType(name) || meta.ContentType : meta.ContentType;
-  const kind = DISPATCH[contentType];
 
   // The edge-computed x-cache-variant token is authoritative when present — it carries
   // zstd, which CloudFront strips from Accept-Encoding. Absent (direct-to-API-Gateway, or
@@ -223,7 +201,7 @@ const resolveVariant = async (name, headers, meta) => {
   const formatOk = token !== undefined ? (c) => token.includes(c.char) : (c) => c.accept.test(normalizedHeaders['accept'] || '');
   const codecOk = token !== undefined ? (c) => token.includes(c.char) : (c) => c.accept.test(acceptEncoding);
 
-  if (kind === 'image') {
+  if (IMAGE_TYPES.has(contentType)) {
     const accepted = IMAGE_CODECS.filter(formatOk);
     const probes = await Promise.all(
       accepted.map(async (c) => {
@@ -237,7 +215,8 @@ const resolveVariant = async (name, headers, meta) => {
     choices.sort((a, b) => a.size - b.size);
     const winner = choices[0];
     return {key: name + winner.suffix, contentType: winner.contentType, headers: {}, vary: 'Accept'};
-  } else if (kind === 'compressible' && !meta.ContentEncoding) {
+  } else if (!meta.ContentEncoding) {
+    // No type list: cxop picks which files get siblings (blog-hugo bin/optimize-public); the bucket is the record.
     const accepted = TEXT_CODECS.filter(codecOk);
     if (accepted.length > 0) {
       const probes = await Promise.all(

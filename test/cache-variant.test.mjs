@@ -37,6 +37,15 @@ const HEAD_TABLE = {
   'tie.jpg.webp': {ContentLength: 3000},
   // A JXL whose base JPEG is gone; the deploy never leaves one.
   'orphan.jpg.jxl': {ContentType: 'binary/octet-stream', ContentLength: 3000},
+  // Types S3 sync stamps that no hand-kept list had: siblings exist, so they negotiate.
+  'app.js': {ContentType: 'text/javascript', ContentLength: 1000, ETag: '"a"', LastModified: new Date('2026-10-13T00:00:00Z')},
+  'app.js.br': {ContentLength: 300},
+  'tool.py': {ContentType: 'text/x-python', ContentLength: 1000, ETag: '"y"', LastModified: new Date('2026-10-13T00:00:00Z')},
+  'tool.py.gz': {ContentLength: 400},
+  'demo.swf': {ContentType: 'application/vnd.adobe.flash.movie', ContentLength: 1000, ETag: '"f"', LastModified: new Date('2026-10-13T00:00:00Z')},
+  'demo.swf.zst': {ContentLength: 700},
+  // No siblings (pagefind's own files are pre-gzipped): identity.
+  'chunk.pf_index': {ContentType: 'binary/octet-stream', ContentLength: 1000, ETag: '"c"', LastModified: new Date('2026-10-13T00:00:00Z')},
 };
 
 let handler;
@@ -103,6 +112,28 @@ test('token absent falls back to raw Accept-Encoding (today’s behavior)', asyn
   const res = await handler(event('/doc', {'Accept-Encoding': 'br'}));
   assert.equal(res.headers['Content-Encoding'], 'br');
   assert.deepEqual(getKeys(), ['doc.br']);
+});
+
+test('any non-image type negotiates the siblings the bucket has', async () => {
+  for (const [path, encoding, key] of [
+    ['/app.js', 'br', 'app.js.br'],
+    ['/tool.py', 'gzip', 'tool.py.gz'],
+    ['/demo.swf', 'zstd', 'demo.swf.zst'],
+  ]) {
+    sent = [];
+    const res = await handler(event(path, {'x-cache-variant': 'bgz'}));
+    assert.equal(res.statusCode, 200, path);
+    assert.equal(res.headers['Content-Encoding'], encoding, path);
+    assert.equal(res.headers['Vary'], 'Accept-Encoding', path);
+    assert.deepEqual(getKeys(), [key], path);
+  }
+});
+
+test('a type with no siblings is served as stored', async () => {
+  const res = await handler(event('/chunk.pf_index', {'x-cache-variant': 'bgz'}));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers['Content-Encoding'], undefined);
+  assert.deepEqual(getKeys(), ['chunk.pf_index']);
 });
 
 test('token with w negotiates webp on an image', async () => {
