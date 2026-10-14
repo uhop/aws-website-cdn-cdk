@@ -187,9 +187,9 @@ const resolveVariant = async (name, headers, meta) => {
   }
 
   const acceptEncoding = normalizedHeaders['accept-encoding'] || '';
-  // `aws s3 sync` types extensions it doesn't know (.jxl) as */octet-stream — the name
-  // is more specific there.
-  const contentType = !meta.ContentType || meta.ContentType.endsWith('/octet-stream') ? mime.getType(name) || meta.ContentType : meta.ContentType;
+  // `aws s3 sync` types extensions it doesn't know as S3's `binary/octet-stream`, which is no
+  // registered type: the name decides, else the standard `application/octet-stream`.
+  const contentType = !meta.ContentType || meta.ContentType.endsWith('/octet-stream') ? mime.getType(name) || 'application/octet-stream' : meta.ContentType;
 
   // The edge-computed x-cache-variant token is authoritative when present — it carries
   // zstd, which CloudFront strips from Accept-Encoding. Absent (direct-to-API-Gateway, or

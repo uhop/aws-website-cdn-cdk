@@ -46,6 +46,8 @@ const HEAD_TABLE = {
   'demo.swf.zst': {ContentLength: 700},
   // No siblings (pagefind's own files are pre-gzipped): identity.
   'chunk.pf_index': {ContentType: 'binary/octet-stream', ContentLength: 1000, ETag: '"c"', LastModified: new Date('2026-10-13T00:00:00Z')},
+  // Stored with no type at all, and an extension no table knows.
+  'blob.unknownext': {ContentLength: 1000, ETag: '"u"', LastModified: new Date('2026-10-13T00:00:00Z')},
 };
 
 let handler;
@@ -126,6 +128,14 @@ test('any non-image type negotiates the siblings the bucket has', async () => {
     assert.equal(res.headers['Content-Encoding'], encoding, path);
     assert.equal(res.headers['Vary'], 'Accept-Encoding', path);
     assert.deepEqual(getKeys(), [key], path);
+  }
+});
+
+test('a file no table knows is application/octet-stream, never S3’s binary/octet-stream', async () => {
+  for (const path of ['/chunk.pf_index', '/blob.unknownext']) {
+    const res = await handler(event(path, {'x-cache-variant': 'bgz'}));
+    assert.equal(res.statusCode, 200, path);
+    assert.equal(res.headers['Content-Type'], 'application/octet-stream', path);
   }
 });
 
