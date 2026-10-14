@@ -119,8 +119,12 @@ const cacheControl = (contentType) =>
 
 const s3Client = new s3.S3Client();
 
-// A miss is a 404 only because the role holds s3:ListBucket (the stack); any other error is logged.
-const isMissing = (error) => error instanceof s3.NotFound;
+// Without s3:ListBucket (the stack) S3 answers a missing key with 403, and a HEAD error has no
+// body for the SDK to name, so the status decides; any other error is logged.
+const isMissing = (error) => {
+  const status = error.$metadata?.httpStatusCode;
+  return status === 403 || status === 404;
+};
 
 const getData = async (name) => {
   const response = await s3Client.send(

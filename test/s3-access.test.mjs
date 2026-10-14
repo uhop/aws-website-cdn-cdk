@@ -5,18 +5,23 @@ import {Template} from 'aws-cdk-lib/assertions';
 import * as s3 from '@aws-sdk/client-s3';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
 
-// A missing key must read as a miss (404, silent) and a denied one as an error (403, logged).
-// S3 returns 404 for a missing key only to a caller holding s3:ListBucket; without it, 403.
-// S3 is mocked as in head.test.mjs; console.error is collected.
+// The origin Lambda holds s3:GetObject only (least privilege), so S3 answers a missing key
+// with 403, and a HEAD error has no body: the SDK names it `Unknown`. A miss (403 or 404)
+// must stay silent; any other error is logged. S3 is mocked as in head.test.mjs, its misses
+// shaped like the real ones; console.error is collected.
 
 const SECRET = 'test-secret';
 
 const HEAD_TABLE = {
   'blog/post/index.html': {ContentType: 'text/html', ContentLength: 1000, ETag: '"p"', LastModified: new Date('2026-10-13T00:00:00Z')},
-  'denied.css': {ContentType: 'text/css', ContentLength: 1000, ETag: '"d"', LastModified: new Date('2026-10-13T00:00:00Z')},
+  'broken.css': {ContentType: 'text/css', ContentLength: 1000, ETag: '"b"', LastModified: new Date('2026-10-13T00:00:00Z')},
 };
 
-const DENIED = new Set(['denied.css.br', 'locked']);
+const NOT_FOUND = new Set(['legacy']);
+const FAILING = new Set(['broken.css.br', 'unlucky']);
+
+const s3Error = (status) =>
+  new s3.S3ServiceException({name: 'Unknown', $fault: status < 500 ? 'client' : 'server', message: 'UnknownError', $metadata: {httpStatusCode: status}});
 
 let handler;
 let originalSend;
@@ -28,12 +33,11 @@ const installMock = () => {
   console.error = (...args) => logged.push(args);
   s3.S3Client.prototype.send = async function (command) {
     const key = command.input.Key;
-    if (DENIED.has(key)) {
-      throw new s3.S3ServiceException({name: 'Unknown', $fault: 'client', message: 'UnknownError', $metadata: {httpStatusCode: 403}});
-    }
+    if (FAILING.has(key)) throw s3Error(500);
+    if (NOT_FOUND.has(key)) throw new s3.NotFound({message: 'UnknownError', $metadata: {httpStatusCode: 404}});
     if (command instanceof s3.HeadObjectCommand) {
       if (key in HEAD_TABLE) return HEAD_TABLE[key];
-      throw new s3.NotFound({message: 'UnknownError', $metadata: {httpStatusCode: 404}});
+      throw s3Error(403);
     }
     if (command instanceof s3.GetObjectCommand) {
       const bytes = new Uint8Array(Buffer.from(`BODY:${key}`));
@@ -62,17 +66,16 @@ after(() => {
   console.error = originalError;
 });
 
-test('the origin Lambda may list the bucket, so a missing key is a 404', () => {
+test('the origin Lambda may not list the bucket', () => {
   const template = Template.fromStack(new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test'));
-  const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap((p) => p.Properties.PolicyDocument.Statement);
-  const list = statements.filter((s) => s.Action === 's3:ListBucket' && s.Effect === 'Allow');
-  assert.equal(list.length, 1);
-  const resource = JSON.stringify(list[0].Resource);
-  assert.ok(resource.includes(':s3:::www.lazutkin.com'), resource);
-  assert.ok(!resource.includes('/*'), 'ListBucket applies to the bucket, not its objects');
+  const actions = Object.values(template.findResources('AWS::IAM::Policy'))
+    .flatMap((p) => p.Properties.PolicyDocument.Statement)
+    .flatMap((s) => [s.Action].flat());
+  assert.ok(actions.includes('s3:GetObject'));
+  assert.ok(!actions.some((a) => a === 's3:ListBucket' || a === 's3:*' || a === 's3:List*'), JSON.stringify(actions));
 });
 
-test('a page reached through misses logs nothing', async () => {
+test('a page reached through 403 misses logs nothing', async () => {
   const res = await handler(event('/blog/post', {'x-cache-variant': 'bgz'}));
   assert.equal(res.statusCode, 200);
   assert.deepEqual(logged, []);
@@ -84,16 +87,22 @@ test('an unknown page is a 404 and logs nothing', async () => {
   assert.deepEqual(logged, []);
 });
 
-test('a denied variant probe is logged, and the original is served', async () => {
-  const res = await handler(event('/denied.css', {'x-cache-variant': 'b'}));
+test('a 404 miss logs nothing either', async () => {
+  const res = await handler(event('/legacy'));
+  assert.equal(res.statusCode, 404);
+  assert.deepEqual(logged, []);
+});
+
+test('a failing variant probe is logged, and the original is served', async () => {
+  const res = await handler(event('/broken.css', {'x-cache-variant': 'b'}));
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['Content-Encoding'], undefined);
   assert.equal(logged.length, 1);
   assert.match(logged[0][0], /^Error checking variant/);
 });
 
-test('a denied lookup is logged', async () => {
-  const res = await handler(event('/locked'));
+test('a failing lookup is logged', async () => {
+  const res = await handler(event('/unlucky'));
   assert.equal(res.statusCode, 404);
   assert.equal(logged.length, 1);
   assert.match(logged[0][0], /^Error checking original object/);
