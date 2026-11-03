@@ -1,10 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {Template} from 'aws-cdk-lib/assertions';
+import {Aspects, Stack} from 'aws-cdk-lib';
+import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
+import {Annotations, Match, Template} from 'aws-cdk-lib/assertions';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
+import {RequireCacheTokenFunction} from '../lib/require-cache-token-function.mjs';
 import {makeApp} from './helpers/cdk-app.mjs';
 
-const template = Template.fromStack(new AwsWebsiteCdnCdkStack(makeApp(), 'Test'));
+const realStack = new AwsWebsiteCdnCdkStack(makeApp(), 'Test');
+const template = Template.fromStack(realStack);
 const behavior = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0].Properties.DistributionConfig.DefaultCacheBehavior;
 
 test('the x-cache-variant token alone keys the cache', () => {
@@ -35,4 +39,27 @@ test('the viewer-request function stays on the behavior', () => {
   const functions = Object.keys(template.findResources('AWS::CloudFront::Function'));
   assert.equal(functions.length, 1);
   assert.deepEqual(behavior.FunctionAssociations, [{EventType: 'viewer-request', FunctionARN: {'Fn::GetAtt': [functions[0], 'FunctionARN']}}]);
+});
+
+const NO_FUNCTION = Match.stringLikeRegexp('viewer-request function');
+
+test('synth refuses a distribution with no viewer-request function', () => {
+  const stack = new Stack(makeApp(), 'Bare');
+  new cloudfront.CfnDistribution(stack, 'Distribution', {
+    distributionConfig: {
+      enabled: true,
+      origins: [{id: 'origin', domainName: 'example.com', customOriginConfig: {originProtocolPolicy: 'https-only'}}],
+      defaultCacheBehavior: {targetOriginId: 'origin', viewerProtocolPolicy: 'redirect-to-https', cachePolicyId: 'policy'},
+    },
+  });
+  Aspects.of(stack).add(new RequireCacheTokenFunction());
+  Annotations.fromStack(stack).hasError('/Bare/Distribution', NO_FUNCTION);
+});
+
+test('synth accepts the real stack, which also carries the check', () => {
+  Annotations.fromStack(realStack).hasNoError('*', NO_FUNCTION);
+  assert.ok(
+    Aspects.of(realStack).all.some((a) => a instanceof RequireCacheTokenFunction),
+    'the stack must add the aspect',
+  );
 });
