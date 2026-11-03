@@ -1,14 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import * as cdk from 'aws-cdk-lib';
 import {Template} from 'aws-cdk-lib/assertions';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
+import {makeApp} from './helpers/cdk-app.mjs';
 
 // Legacy standard logging was retired at the 2026-07-14 ingest cutover; v2 below
 // is the only stream. Locks the retirement so it can't drift back and resume
 // writing raw-IP logs to the cloudfront/ prefix nothing ingests any more.
 test('CloudFront distributions carry no legacy access logging', () => {
-  const stack = new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test');
+  const stack = new AwsWebsiteCdnCdkStack(makeApp(), 'Test');
   const template = Template.fromStack(stack);
 
   for (const [logicalId, resource] of Object.entries(template.findResources('AWS::CloudFront::Distribution'))) {
@@ -39,7 +39,7 @@ const V2_RECORD_FIELDS = [
 ];
 
 test('standard logging v2 delivers the PII-free field set to the cloudfront-v2/ prefix', () => {
-  const stack = new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test');
+  const stack = new AwsWebsiteCdnCdkStack(makeApp(), 'Test');
   const template = Template.fromStack(stack);
 
   template.resourceCountIs('AWS::Logs::DeliverySource', 1);

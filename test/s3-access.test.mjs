@@ -1,9 +1,9 @@
 import {test, before, beforeEach, after} from 'node:test';
 import assert from 'node:assert/strict';
-import * as cdk from 'aws-cdk-lib';
 import {Template} from 'aws-cdk-lib/assertions';
 import * as s3 from '@aws-sdk/client-s3';
 import {AwsWebsiteCdnCdkStack} from '../lib/aws-website-cdn-cdk-stack.mjs';
+import {makeApp} from './helpers/cdk-app.mjs';
 
 // The origin Lambda holds s3:GetObject only (least privilege), so S3 answers a missing key
 // with 403, and a HEAD error has no body: the SDK names it `Unknown`. A miss (403 or 404)
@@ -67,7 +67,7 @@ after(() => {
 });
 
 test('the origin Lambda may not list the bucket', () => {
-  const template = Template.fromStack(new AwsWebsiteCdnCdkStack(new cdk.App(), 'Test'));
+  const template = Template.fromStack(new AwsWebsiteCdnCdkStack(makeApp(), 'Test'));
   const actions = Object.values(template.findResources('AWS::IAM::Policy'))
     .flatMap((p) => p.Properties.PolicyDocument.Statement)
     .flatMap((s) => [s.Action].flat());

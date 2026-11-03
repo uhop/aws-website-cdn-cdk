@@ -14,7 +14,7 @@
     "synth": "cdk synth",
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
-    "test": "node --test",
+    "test": "node --test \"test/*.test.mjs\"",
     "lint": "prettier --check .",
     "lint:fix": "prettier --write .",
     "prettier": "prettier --write ."
