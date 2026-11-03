@@ -41,6 +41,49 @@ const MONTH_ABBR = {
   dec: '12',
 };
 
+// Django-era category IDs, named by the titles of their archived pages. A name with no tag
+// takes its parent's. 12 (Politics) has no parent tag; 9 and 10 were never archived.
+const CATEGORY_TAGS = {
+  1: 'development',
+  2: 'development',
+  3: 'python',
+  4: 'django',
+  5: 'web',
+  6: 'web',
+  7: 'general',
+  8: 'rants',
+  11: 'rants',
+  13: 'rants',
+  14: 'news',
+  15: 'dojo',
+  16: 'db',
+  17: 'mysql',
+  18: 'db',
+  19: 'sqlite',
+  20: 'db',
+  21: 'hosting',
+  22: 'dreamhost',
+  23: 'syndication',
+  24: 'rss',
+  25: 'syndication',
+  26: 'linux',
+  27: 'openwrt',
+  28: 'tutorials',
+  29: 'python',
+  30: 'django',
+  31: 'windows',
+};
+
+const categoryPage = (m) => {
+  const tag = CATEGORY_TAGS[m[1]];
+  return tag ? `/tags/${tag}` : null;
+};
+
+const categoryFeed = (m) => {
+  const tag = CATEGORY_TAGS[m[1]];
+  return tag ? `/tags/${tag}/index.xml` : '/index.xml';
+};
+
 const REDIRECTS = {
   exact: {
     // Orphan: no canonical post on 2005-09-23; hand-mapped to the closest from
@@ -50,12 +93,34 @@ const REDIRECTS = {
   },
   patterns: [
     {
-      // Django-era feed URLs (~1,500 polls/month from old RSS readers). Per-tag
-      // mapping isn't faithful — legacy numeric category IDs don't map to current
-      // tag slugs — so everything funnels to the global feed.
-      match:
-        /^(?:\/blog\/feeds\/rss\/categories\/\d+|\/blog\/feeds\/(?:rss|atom)\/latest|\/blog\/rss201\.xml|\/blog\/categories\/(?:[^/]+\/(?:atom|rss201)\.xml|\d+\/rss201\.xml|rss\/?)|\/atom\.xml)\/?$/,
+      // Django-era feeds of the whole blog; it has one author, so the author feeds are too.
+      match: /^(?:\/blog\/feeds\/(?:rss|atom)\/(?:latest|authors\/\d+)|\/blog\/rss201\.xml|\/blog\/categories\/rss|\/atom\.xml)\/?$/,
       target: '/index.xml',
+    },
+    {
+      match: /^\/blog\/feeds\/(?:rss|atom)\/categories\/(\d+)\/?$/,
+      resolve: categoryFeed,
+    },
+    {
+      match: /^\/blog\/categories\/(\d+)\/(?:atom|x?rss201)\.xml\/?$/,
+      resolve: categoryFeed,
+    },
+    {
+      match: /^\/blog\/categories\/([a-z][a-z0-9-]*)\/(?:atom|x?rss201)\.xml\/?$/,
+      resolve: (m) => `/tags/${m[1]}/index.xml`,
+    },
+    {
+      match: /^\/blog\/categories\/(\d+)\/?$/,
+      resolve: categoryPage,
+    },
+    {
+      // A leading letter keeps an ID with no tag out of this rule.
+      match: /^\/blog\/categories\/([a-z][a-z0-9-]*)\/?$/,
+      resolve: (m) => `/tags/${m[1]}`,
+    },
+    {
+      match: /^(?:\/blog)?\/categories\/?$/,
+      target: '/tags',
     },
     {
       // Legacy date-path form (was emitted as Hugo aliases until 2026-05-16).
@@ -82,7 +147,9 @@ export const findRedirect = (path) => {
   if (path in REDIRECTS.exact) return REDIRECTS.exact[path];
   for (const r of REDIRECTS.patterns) {
     const m = r.match.exec(path);
-    if (m) return r.resolve ? r.resolve(m) : r.target;
+    if (!m) continue;
+    const target = r.resolve ? r.resolve(m) : r.target;
+    if (target) return target;
   }
   return null;
 };
