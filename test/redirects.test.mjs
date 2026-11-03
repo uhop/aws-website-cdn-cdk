@@ -20,7 +20,7 @@ test('legacy / feed / exact redirects win over the generic strip-slash rule', ()
   assert.equal(findRedirect('/blog/2014/05/18/unification-for-js/'), '/blog/2014-05-18-unification-for-js');
   assert.equal(findRedirect('/blog/2006/may/6/migration-magic-removal/'), '/blog/2006-05-06-migration-magic-removal');
   assert.equal(findRedirect('/blog/2005/sep/23/openwrt_gui/'), '/blog/2005-09-30-openwrt_gui_development');
-  assert.equal(findRedirect('/blog/feeds/rss/categories/5/'), '/tags/web/index.xml');
+  assert.equal(findRedirect('/blog/feeds/rss/categories/5/'), '/index.xml');
 });
 
 test('numeric category pages go to the tag of the category they named', () => {
@@ -64,31 +64,20 @@ test('the category index goes to the tag index', () => {
   }
 });
 
-test('every numeric category feed form goes to the feed of its tag', () => {
+test('every Django-era feed goes to the whole-site feed, category feeds included', () => {
   for (const path of [
     '/blog/categories/4/rss201.xml',
     '/blog/categories/4/xrss201.xml',
     '/blog/categories/4/atom.xml',
-    '/blog/feeds/rss/categories/4',
-    '/blog/feeds/rss/categories/4/',
-    '/blog/feeds/atom/categories/4',
-    '/blog/feeds/atom/categories/4/',
-  ]) {
-    assert.equal(findRedirect(path), '/tags/django/index.xml');
-  }
-});
-
-test('slug category feeds go to the feed of the tag of the same name', () => {
-  assert.equal(findRedirect('/blog/categories/django/atom.xml'), '/tags/django/index.xml');
-  assert.equal(findRedirect('/blog/categories/django/rss201.xml'), '/tags/django/index.xml');
-  assert.equal(findRedirect('/blog/categories/django/xrss201.xml'), '/tags/django/index.xml');
-});
-
-test('feeds with no category tag go to the whole-site feed', () => {
-  for (const path of [
     '/blog/categories/9/rss201.xml',
     '/blog/categories/12/xrss201.xml',
+    '/blog/categories/django/atom.xml',
+    '/blog/categories/django/rss201.xml',
+    '/blog/categories/django/xrss201.xml',
+    '/blog/feeds/rss/categories/1/',
+    '/blog/feeds/rss/categories/4',
     '/blog/feeds/rss/categories/12/',
+    '/blog/feeds/atom/categories/4',
     '/blog/feeds/atom/categories/10/',
     '/blog/feeds/rss/latest/',
     '/blog/feeds/atom/latest',

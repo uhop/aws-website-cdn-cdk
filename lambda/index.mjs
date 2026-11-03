@@ -79,11 +79,6 @@ const categoryPage = (m) => {
   return tag ? `/tags/${tag}` : null;
 };
 
-const categoryFeed = (m) => {
-  const tag = CATEGORY_TAGS[m[1]];
-  return tag ? `/tags/${tag}/index.xml` : '/index.xml';
-};
-
 const REDIRECTS = {
   exact: {
     // Orphan: no canonical post on 2005-09-23; hand-mapped to the closest from
@@ -93,21 +88,10 @@ const REDIRECTS = {
   },
   patterns: [
     {
-      // Django-era feeds of the whole blog; it has one author, so the author feeds are too.
-      match: /^(?:\/blog\/feeds\/(?:rss|atom)\/(?:latest|authors\/\d+)|\/blog\/rss201\.xml|\/blog\/categories\/rss|\/atom\.xml)\/?$/,
+      // Every Django-era feed, category ones included: of the tags in CATEGORY_TAGS, only development still gets posts.
+      match:
+        /^(?:\/blog\/feeds\/(?:rss|atom)\/(?:latest|authors\/\d+|categories\/\d+)|\/blog\/rss201\.xml|\/blog\/categories\/(?:rss|[^/]+\/(?:atom|x?rss201)\.xml)|\/atom\.xml)\/?$/,
       target: '/index.xml',
-    },
-    {
-      match: /^\/blog\/feeds\/(?:rss|atom)\/categories\/(\d+)\/?$/,
-      resolve: categoryFeed,
-    },
-    {
-      match: /^\/blog\/categories\/(\d+)\/(?:atom|x?rss201)\.xml\/?$/,
-      resolve: categoryFeed,
-    },
-    {
-      match: /^\/blog\/categories\/([a-z][a-z0-9-]*)\/(?:atom|x?rss201)\.xml\/?$/,
-      resolve: (m) => `/tags/${m[1]}/index.xml`,
     },
     {
       match: /^\/blog\/categories\/(\d+)\/?$/,
