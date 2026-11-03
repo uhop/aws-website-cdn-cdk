@@ -13,3 +13,8 @@ test('the viewer-request function updates after the origin Lambda', () => {
   assert.equal(functions.length, 1);
   assert.ok(functions[0].DependsOn?.includes(origins[0][0]), 'the CloudFront Function must DependsOn the origin Lambda');
 });
+
+test('the distribution survives both a stack delete and a replacement', () => {
+  const template = Template.fromStack(new AwsWebsiteCdnCdkStack(makeApp(), 'Test'));
+  template.hasResource('AWS::CloudFront::Distribution', {DeletionPolicy: 'Retain', UpdateReplacePolicy: 'Retain'});
+});
