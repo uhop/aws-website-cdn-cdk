@@ -1,9 +1,12 @@
-// CloudFront Function (viewer-request, cloudfront-js-2.0). Two jobs, in order:
-// 301 any non-canonical Host to www.lazutkin.com, then normalize Accept /
-// Accept-Encoding and a .jxl URL suffix into the `x-cache-variant` cache-key token.
-// Read verbatim as the function body by lib/aws-website-cdn-cdk-stack.mjs. No export —
-// the runtime has no module system; test/cf-normalize.test.mjs evaluates this file to
-// test it. Token registry + design: projects/aws-website-cdn-cdk/decisions § Tier 1 (vault).
+// CloudFront Function (viewer-request, cloudfront-js-2.0). Three jobs, in order:
+// 301 any non-canonical Host to www.lazutkin.com, log the viewer's Accept, then normalize
+// Accept / Accept-Encoding and a .jxl URL suffix into the `x-cache-variant` cache-key token.
+// Read verbatim as the function body by lib/aws-website-cdn-cdk-stack.mjs. Its one import is
+// the runtime's `cloudfront` module and it has no export; test/cf-normalize.test.mjs
+// evaluates this file with a stub for `cf`. Token registry + design:
+// projects/aws-website-cdn-cdk/decisions § Tier 1 (vault).
+
+import cf from 'cloudfront';
 
 // CloudFront always answers on the distribution's own d*.cloudfront.net default domain
 // and AWS offers no switch to disable it, so the site is reachable under two names.
@@ -84,6 +87,9 @@ function handler(event) {
       },
     };
   }
+
+  // Standard logs have no Accept field; this lands in viewer-request-log-data.
+  if (h.accept) cf.logCustomData(h.accept.value);
 
   const accept = h.accept ? h.accept.value.toLowerCase() : '';
   const ae = h['accept-encoding'] ? h['accept-encoding'].value.toLowerCase() : '';

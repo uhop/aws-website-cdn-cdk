@@ -18,7 +18,8 @@ test('CloudFront distributions carry no legacy access logging', () => {
 
 // The ingested set (tools/analyze-logs/ingest.mjs FIELD) + c-country/asn.
 // Exact match doubles as the PII lock: cs-uri-query, cs(Cookie), and
-// x-forwarded-for must never enter the selection.
+// x-forwarded-for must never enter the selection, and viewer-request-log-data
+// carries only what cf/normalize.js logs, the viewer's Accept.
 const V2_RECORD_FIELDS = [
   'date',
   'time',
@@ -36,6 +37,8 @@ const V2_RECORD_FIELDS = [
   'time-to-first-byte',
   'c-country',
   'asn',
+  'sc-content-type',
+  'viewer-request-log-data',
 ];
 
 test('standard logging v2 delivers the PII-free field set to the cloudfront-v2/ prefix', () => {

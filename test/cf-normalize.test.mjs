@@ -2,11 +2,14 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
-// cf/normalize.js is CloudFront Function source (no ESM export — the runtime has no
-// module system), so evaluate the real file to expose the entry point + helpers. A
-// syntax error in the deployable source therefore fails this suite.
+// cf/normalize.js is CloudFront Function source (no ESM export), so evaluate the real file
+// to expose the entry point + helpers, with a stub in place of the runtime's `cloudfront`
+// module. A syntax error in the deployable source therefore fails this suite.
+const CF_IMPORT = /^import cf from 'cloudfront';$/m;
 const src = readFileSync(new URL('../cf/normalize.js', import.meta.url), 'utf8');
-const {handler, accepted, CANONICAL_HOST} = new Function(`${src}\nreturn {handler, accepted, CANONICAL_HOST};`)();
+const logged = [];
+const cfStub = {logCustomData: (data) => logged.push(data)};
+const {handler, accepted, CANONICAL_HOST} = new Function('cf', `${src.replace(CF_IMPORT, '')}\nreturn {handler, accepted, CANONICAL_HOST};`)(cfStub);
 
 // Guards the x-cache-variant token grammar. The load-bearing invariant is
 // `token === sorted(token)`: the function builds the token by appending in a FROZEN
@@ -31,6 +34,17 @@ const redirect = (host, uri = '/', querystring = {}) => handler({request: {heade
 // Real-world Accept headers (MDN default values), trimmed to what matters here.
 const CHROME_IMG = 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8';
 const SAFARI_IMG = 'image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5';
+
+// The access log's only Accept: standard logging has no such field (analyze-logs reads it
+// from viewer-request-log-data). A redirect never reaches the log call.
+test("the viewer's Accept goes to the log verbatim, and nothing when it is absent", () => {
+  assert.match(src, CF_IMPORT, 'cf.logCustomData needs the runtime module imported');
+  logged.length = 0;
+  normalize('/', 'Text/Markdown, text/html, */*', 'br');
+  normalize('/', undefined, 'br');
+  redirect('lazutkin.com');
+  assert.deepEqual(logged, ['Text/Markdown, text/html, */*']);
+});
 
 test('representative clients map to the expected canonical token', () => {
   assert.equal(run(CHROME_IMG, 'gzip, deflate, br, zstd'), 'abgwz'); // Chrome
